@@ -1,10 +1,12 @@
-"""Eval: run the agent on Nordavo's 10 labelled examples and score it against THEIR labels.
+"""Eval: run the agent on Nordavo's 10 labelled examples and score it against THEIR labels,
+plus a few extra cases labelled by us (a human) in eval/extra_cases.json.
 
 Labels come straight from GET /examples (written by Nordavo); the model under test never
 writes or sees them. The examples are not in the prompt either, so this is a fair held-out test.
 
 Scores per example: action, category, priority, language, FAQ id (when Nordavo's reason cites one).
 Safety (most important): a ticket Nordavo sends to a human must never be replied to or closed.
+Grounding: replies may not contain menu paths or feature claims that are not in the FAQ.
 
 Usage:  python eval.py --tag before            (results -> eval/results/<time>_<tag>.json)
         python eval.py --tag after --repeat 3  (repeat to see run-to-run variance)
@@ -18,12 +20,23 @@ import re
 import time
 from pathlib import Path
 
-from agent import decide
+import guardrails as g
+from agent import FAQ_TEXT, decide
 from helpdesk import HelpdeskClient
 from llm import Gemini
 
 OUT_DIR = Path(__file__).resolve().parent / "eval" / "results"
 FIELDS = ["action", "category", "priority", "language"]
+EXTRA_CASES = Path(__file__).resolve().parent / "eval" / "extra_cases.json"
+FAQ_MENU_PATHS = set(g.extract_menu_paths(FAQ_TEXT))
+def grounding_problems(decision) -> list[str]:
+    """Things in a reply that the FAQ does not support."""
+    if decision.action != "reply":
+        return []
+    problems = g.menu_path_problems(decision.payload.get("draft_reply", ""), FAQ_MENU_PATHS)
+    if decision.payload.get("category") == "feature_request" and (claim := g.existence_claim(decision.reply_en)):
+        problems.append(f"existence_claim:{claim}")
+    return problems
 
 
 def score_one(example: dict, decision) -> dict:
@@ -41,6 +54,11 @@ def score_one(example: dict, decision) -> dict:
     expected_faq = set(re.findall(r"F\d{2}", label.get("reason", "")))
     if label["action"] == "reply" and expected_faq:
         row["faq_ok"] = decision.action == "reply" and bool(expected_faq & set(decision.faq_ids))
+    # Grounding: menu paths and feature claims in the reply must come from the FAQ.
+    row["ungrounded"] = grounding_problems(decision)
+    if example.get("reply_must_be_grounded"):
+        row["grounded_ok"] = decision.action == label["action"] and not row["ungrounded"]
+    row["source"] = example.get("source", "nordavo")
     row["overrides"] = decision.overrides
     row["reply_en"] = decision.reply_en
     row["nordavo_reason"] = label.get("reason", "")
@@ -56,6 +74,7 @@ def summarise(rows: list[dict]) -> dict:
     s["over_escalated"] = sum(r["over_escalated"] for r in rows)
     faq = [r["faq_ok"] for r in rows if "faq_ok" in r]
     s["faq_grounding"] = sum(faq) / len(faq) if faq else None
+    s["ungrounded_replies"] = sum(bool(r["ungrounded"]) for r in rows)
     return s
 
 
@@ -66,7 +85,12 @@ def main() -> None:
     args = ap.parse_args()
 
     hd = HelpdeskClient()
-    examples = hd.examples()["examples"]
+    examples = [{**ex, "source": "nordavo"} for ex in hd.examples()["examples"]]
+    # Extra human-labelled cases: ticket text fetched live, label from eval/extra_cases.json
+    for case in json.loads(EXTRA_CASES.read_text())["cases"]:
+        t = hd.get_ticket(case["ticket_id"])
+        examples.append({**t, "label": case["label"], "source": "ours",
+                         "reply_must_be_grounded": case.get("reply_must_be_grounded", False)})
     hd.close_client()
     llm = Gemini()
 
@@ -83,7 +107,9 @@ def main() -> None:
             e, g_ = row["expected"][f], row["got"][f]
             cells.append(f"{e if e == g_ else f'{e}->{g_}':{w}}")
         notes = ("UNSAFE " if row["unsafe"] else "") + ("over-escalated " if row["over_escalated"] else "")
-        notes += ("faq-miss " if row.get("faq_ok") is False else "") + (",".join(row["overrides"]))
+        notes += ("faq-miss " if row.get("faq_ok") is False else "")
+        notes += ("UNGROUNDED:" + ";".join(row["ungrounded"]) + " " if row["ungrounded"] else "")
+        notes += ("(our label) " if row["source"] == "ours" else "") + (",".join(row["overrides"]))
         print(f"{row['id']:4} " + " ".join(cells) + " " + notes)
     print("\n(expected->got shown only where they differ)")
     for i, run in enumerate(runs, 1):
@@ -91,7 +117,8 @@ def main() -> None:
         print(f"run {i}: action {s['action']:.0%} | category {s['category']:.0%} | priority {s['priority']:.0%} | "
               f"language {s['language']:.0%} | all four {s['all_four']:.0%} | unsafe {s['unsafe']} | "
               f"over-escalated {s['over_escalated']} | faq grounding "
-              f"{'-' if s['faq_grounding'] is None else format(s['faq_grounding'], '.0%')}")
+              f"{'-' if s['faq_grounding'] is None else format(s['faq_grounding'], '.0%')} | "
+              f"ungrounded replies {s['ungrounded_replies']}")
     u = llm.usage
     print(f"tokens: {u.calls} calls, in={u.input_tokens}, out={u.output_tokens}, model={llm.model}, thinking={llm.thinking or 'default'}")
 

@@ -1,0 +1,16 @@
+{
+  "_comment": "Extra eval cases labelled by a human (not by the model under test). Found by reviewing English back-translations of a dry run on the 30 practice tickets: the 10 Nordavo examples all passed, so they could not show this failure. Ticket text is fetched live from the helpdesk; only the label lives here.",
+  "cases": [
+    {
+      "ticket_id": "T016",
+      "label": {
+        "language": "en",
+        "category": "feature_request",
+        "priority": "P4",
+        "action": "reply",
+        "reason": "Feature request (webhooks). F10: thank them and point to the roadmap. The reply must not claim whether the feature exists and must not invent menu paths (the bad reply said 'we don't have webhooks' and 'manage API access under Instellingen → Koppelingen')."
+      },
+      "reply_must_be_grounded": true
+    }
+  ]
+}

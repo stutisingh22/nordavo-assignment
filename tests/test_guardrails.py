@@ -54,3 +54,30 @@ def test_reply_problems():
 def test_raise_priority_never_lowers():
     assert g.raise_priority("P4", "P2") == "P2"
     assert g.raise_priority("P1", "P2") == "P1"
+
+
+FAQ_PATHS = {"Instellingen → Abonnement", "Instellingen → Koppelingen → Salaris", "Profiel → Taal",
+             "Profile → Language", "Settings → Integrations → Payroll"}
+
+
+def test_menu_paths_must_exist_in_faq():
+    ok = "Ga naar Instellingen → Abonnement kunt u upgraden. Of Profiel → Taal (Profile → Language)."
+    assert g.menu_path_problems(ok, FAQ_PATHS) == []
+    # Invented / shortened path seen in a dry run (T016)
+    bad = "manage API access under Instellingen → Koppelingen (Settings → Integrations)."
+    assert len(g.menu_path_problems(bad, FAQ_PATHS)) == 2
+    # Model translating menu names itself (German reply)
+    assert g.menu_path_problems("unter Profil → Sprache", FAQ_PATHS) == ["unknown_menu_path:Profil → Sprache"]
+
+
+def test_existence_claim():
+    assert g.existence_claim("We currently do not have built-in webhooks for published shifts.")
+    assert g.existence_claim("This is not possible yet.")
+    assert g.existence_claim("Thank you for your idea! You can vote on roadmap.roosterly.nl.") is None
+    assert g.existence_claim("We cannot promise a delivery date for individual requests.") is None
+
+
+def test_existence_claim_matches_faq_facts_too_so_callers_scope_it():
+    # "not supported" is a real FAQ fact for E01 (F12): the agent only applies this check to
+    # feature_request replies, so this bug reply is NOT blocked there.
+    assert g.existence_claim("Unfortunately iOS 15 is not supported; the app needs iOS 16 or later.")

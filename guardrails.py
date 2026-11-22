@@ -112,6 +112,48 @@ def reply_problems(reply: str) -> list[str]:
     return problems
 
 
+# --- 4. Menu paths must exist in the FAQ ---------------------------------------------
+# Replies give click-paths like "Instellingen → Abonnement → Facturen". An invented path
+# (e.g. "Instellingen → Koppelingen" for API access, seen in a dry run) sends customers to a
+# screen that may not exist. Every path in a reply must exactly match one in the FAQ.
+_SEGMENT = r"[A-ZÄÖÜ][\w-]*(?: [a-zäöüß][\w-]*)?"
+MENU_PATH = re.compile(rf"{_SEGMENT}(?:\s*→\s*{_SEGMENT})+")
+
+
+def _norm_path(p: str) -> str:
+    return " → ".join(s.strip() for s in p.split("→"))
+
+
+def extract_menu_paths(text: str) -> list[str]:
+    text = re.sub(r"[*_\"'“”‘’]", "", text).replace("->", "→")
+    return [_norm_path(m.group(0)) for m in MENU_PATH.finditer(text)]
+
+
+def menu_path_problems(reply: str, allowed: set[str]) -> list[str]:
+    problems = []
+    for path in extract_menu_paths(reply):
+        segs = path.split(" → ")
+        # The last segment may have swallowed the next word of the sentence ("Abonnement kunt").
+        variants = {path, " → ".join(segs[:-1] + [segs[-1].split(" ")[0]])}
+        if not variants & allowed:
+            problems.append(f"unknown_menu_path:{path}")
+    return problems
+
+
+# --- 5. Claims about what the product has -------------------------------------------
+# The FAQ never says a requested feature is missing or planned, so a feature-request reply that
+# says so is invented. Callers apply this to feature_request replies only. Checked on the English back-translation (we cannot regex every Dutch phrasing).
+EXISTENCE_CLAIM = re.compile(
+    r"\b(we (currently )?(do not|don't|does not|doesn't) (yet )?(have|offer|support)|"
+    r"(is|are) not (yet |currently )?(available|possible|supported)|not possible|currently (no|not)\b)",
+    re.IGNORECASE)
+
+
+def existence_claim(reply_en: str) -> str | None:
+    m = EXISTENCE_CLAIM.search(reply_en or "")
+    return m.group(0) if m else None
+
+
 PRIORITY_ORDER = ["P1", "P2", "P3", "P4"]
 
 

@@ -25,6 +25,7 @@ from redact import redact, redact_obj
 FAQ_PATH = Path(__file__).resolve().parent / "knowledge" / "faq.md"
 FAQ_TEXT = FAQ_PATH.read_text(encoding="utf-8")
 FAQ_IDS = set(re.findall(r"^## (F\d{2})", FAQ_TEXT, re.MULTILINE))
+FAQ_MENU_PATHS = set(g.extract_menu_paths(FAQ_TEXT))
 
 CONFIDENCE_THRESHOLD = 0.7
 LANGUAGES = ["nl", "en", "de"]
@@ -54,13 +55,15 @@ integrations or links. If the help centre does not answer it, a human handles it
 # Action
 - reply: only if the help centre fully answers EVERY question in the ticket. Cite the FAQ ids used.
   Use the customer's plan: if they ask for something that is in a different plan, say so (F04, F05, F07).
-  Feature requests (the customer asks for something new): reply, thank them, point to the roadmap (F10),
-  promise nothing.
+  Feature requests: the customer wants a capability or integration the help centre does not mention
+  (also when phrased as "is this possible?" or "does it work with X?"). Category feature_request.
+  Reply using ONLY the facts in F10: thank them, point to roadmap.roosterly.nl where they can vote,
+  no delivery date. NEVER say whether the feature exists, is missing or is planned, and do not suggest
+  other features or workarounds: the help centre does not tell you, so any such sentence is invented.
   A bug the help centre explains (e.g. an unsupported OS version, F12): reply.
 - handoff: everything else, including:
   - any of the always-human topics in the client rules (list them in rule_triggers)
   - bugs, errors or wrong data the help centre does not explain
-  - "does X exist / does it work with Y" when the help centre does not say
   - follow-ups chasing an earlier ticket
   - tickets with several requests where ANY part needs a human (cover all parts in the note)
 - close: only spam, advertising, scams, or tickets with no request at all.
@@ -80,8 +83,10 @@ other (spam, privacy/GDPR requests, legal matters, anything else).
 # Texts
 - language: the language the customer wrote in: nl, en or de.
 - draft_reply: ONLY when action is reply, otherwise "". Write in the customer's language. Short and friendly,
-  greet by first name if they signed, give the exact steps and menu names from the help centre
-  (keep the Dutch menu names; for en/de add the meaning in brackets as the help centre does).
+  greet by first name if they signed, give the exact steps from the help centre.
+  Menu paths: copy them exactly as written in the help centre, e.g. "Instellingen → Abonnement → Facturen".
+  Never shorten, combine or invent a path. Keep the Dutch menu names; in en/de replies add the English
+  meaning in brackets exactly as the help centre gives it. Never translate menu names yourself.
   Sign off as "Team Roosterly". No placeholders.
 - reply_en: a faithful English translation of draft_reply ("" if no reply).
 - handoff_note: ALWAYS fill this, in English, max 3 sentences: what the customer wants, the key facts
@@ -189,8 +194,12 @@ def decide(ticket: dict, llm: Gemini) -> Decision:
             force_handoff(f"low_confidence:{out['confidence']:.2f}")
         elif reply_lang and reply_lang != lang:
             force_handoff(f"reply_language_mismatch:{reply_lang}!={lang}")
-        elif problems := g.reply_problems(reply):
+        elif problems := g.reply_problems(reply) + g.menu_path_problems(reply, FAQ_MENU_PATHS):
             force_handoff("unsafe_reply:" + ",".join(problems))
+        elif out["category"] == "feature_request" and (claim := g.existence_claim(out.get("reply_en", ""))):
+            # Only for feature requests: the FAQ never says what is missing. Elsewhere "not supported"
+            # can be a real FAQ fact (iOS 15 is not supported, F12).
+            force_handoff(f"ungrounded_feature_claim:{claim}")
 
     if action == "close" and (out["confidence"] < CONFIDENCE_THRESHOLD):
         force_handoff(f"low_confidence_close:{out['confidence']:.2f}")
