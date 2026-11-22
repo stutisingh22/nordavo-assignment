@@ -69,7 +69,7 @@ def test_crash_before_post_resends_same_decision(env):
     hd, store = env
     store.mark_pending("T1", "reply", DECISION)  # crashed right after writing intent
     ok, saved = needs_decision(hd, store, "T1")
-    assert ok and saved == DECISION  # resend exactly what we meant to send, no new LLM call
+    assert ok and saved == {"action": "reply", "decision": DECISION}  # resend exactly, no new LLM call
 
 
 def test_503_exhausted_marks_failed_and_retry_is_safe(env):

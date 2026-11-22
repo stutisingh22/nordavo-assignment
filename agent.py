@@ -91,6 +91,7 @@ other (spam, privacy/GDPR requests, legal matters, anything else).
 - reply_en: a faithful English translation of draft_reply ("" if no reply).
 - handoff_note: ALWAYS fill this, in English, max 3 sentences: what the customer wants, the key facts
   (plan, numbers, deadlines), why a human is needed, a suggested next step. No payment details.
+  Suggest what to check, never what to grant: refunds, discounts and exceptions are the human's decision.
 - reason: one or two English sentences: why this category, priority and action (cite FAQ ids).
 - confidence: 0-1, how sure you are the action is right and any reply is fully supported by the help centre.
 """

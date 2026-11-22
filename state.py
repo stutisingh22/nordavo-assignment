@@ -110,7 +110,10 @@ def server_says_handled(hd: HelpdeskClient, ticket_id: str) -> bool:
 
 
 def needs_decision(hd: HelpdeskClient, store: StateStore, ticket_id: str) -> tuple[bool, dict | None]:
-    """Should we work on this ticket? Returns (yes/no, decision to resend if a crash left one pending).
+    """Should we work on this ticket?
+
+    Returns (yes/no, pending) where pending = {"action", "decision"} if a crash left an unconfirmed
+    decision for a ticket the helpdesk still shows as open: resend exactly that, no new LLM call.
 
     Call this BEFORE spending an LLM call on the ticket.
     """
@@ -121,7 +124,7 @@ def needs_decision(hd: HelpdeskClient, store: StateStore, ticket_id: str) -> tup
         store.mark_done(ticket_id, rec["action"] if rec else "unknown", "server_already_handled")
         return False, None
     if rec and rec["event"] == "pending":
-        return True, rec["decision"]  # crashed before confirm, server says open: resend same decision
+        return True, {"action": rec["action"], "decision": rec["decision"]}
     return True, None
 
 
