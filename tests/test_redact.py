@@ -46,3 +46,19 @@ def test_run_ids_and_timestamps_survive_redaction():
     # Log metadata must stay readable: "20261122-164530" looked like a card number.
     for text in ["20261122T164530-e7d173", "2026-11-22T16:45:30+0100"]:
         assert redact(text) == (text, False)
+
+
+def test_password_email_phone_masked_but_not_payment():
+    text = ("Mijn wachtwoord is Zomer2024! en mail me op anouk@restaurant.nl "
+            "of bel +31 6 12345678 / 020-1234567.")
+    out, found = redact(text)
+    assert not found  # not payment details: must not force a handoff on its own
+    for secret in ["Zomer2024", "anouk@restaurant.nl", "12345678", "1234567"]:
+        assert secret not in out
+    assert "[PASSWORD REDACTED]" in out and "[EMAIL REDACTED]" in out and "[PHONE REDACTED]" in out
+
+
+def test_password_words_without_a_secret_stay():
+    for text in ['Klik op "Wachtwoord vergeten" (Forgot password).', "My password is not working since Monday.",
+                 "De resetlink is 60 minuten geldig.", "Er is voor oktober twee keer €312 afgeschreven."]:
+        assert redact(text) == (text, False)

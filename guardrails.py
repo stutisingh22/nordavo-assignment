@@ -8,6 +8,21 @@ Every override is recorded so it shows up in the log and the eval.
 from __future__ import annotations
 
 import re
+import unicodedata
+
+from redact import EMAIL, phone_numbers
+
+# Look-alike letters (Cyrillic/Greek) that NFKC does not fold: "refυnd" must still match "refund".
+_CONFUSABLES = str.maketrans(
+    "аеорсухіјкмнтв"   # Cyrillic
+    "υνοαιερτχ",       # Greek
+    "aeopcyxijkmhtb"
+    "uvoaieptx")
+
+
+def fold(text: str) -> str:
+    """Normalise text before keyword matching: NFKC, look-alike letters to Latin, lower case."""
+    return unicodedata.normalize("NFKC", text).lower().translate(_CONFUSABLES)
 
 # --- 1. Client rules that always go to a human ------------------------------------
 # Word stems in Dutch, English and German, matched on the (redacted) ticket text.
@@ -66,7 +81,7 @@ RULE_MIN_PRIORITY = {
 
 
 def always_human_hits(text: str) -> list[str]:
-    t = text.lower()
+    t = fold(text)
     return [rule for rule, pats in ALWAYS_HUMAN.items() if any(re.search(p, t) for p in pats)]
 
 
@@ -121,7 +136,7 @@ UNEXPECTED_CHAR = re.compile(r"[^\x09\x0a\x0d\x20-\x7eäöüßÄÖÜéèëêïí
 
 def reply_problems(reply: str) -> list[str]:
     problems = []
-    low = reply.lower()
+    low = fold(reply)
     for p in FORBIDDEN_IN_REPLY:
         if re.search(p, low):
             problems.append(f"forbidden_promise:{p}")
@@ -130,6 +145,11 @@ def reply_problems(reply: str) -> list[str]:
             problems.append(f"unknown_link:{m.group(1)}")
     if OTHER_LINK.search(reply):
         problems.append("external_link")
+    # The FAQ contains no email address or phone number: any in a reply was invented or injected.
+    if EMAIL.search(reply):
+        problems.append("email_address_in_reply")
+    if phone_numbers(reply):
+        problems.append("phone_number_in_reply")
     if bad := sorted(set(UNEXPECTED_CHAR.findall(reply))):
         problems.append("garbled_characters:" + "".join(bad))
     if "[" in reply and "]" in reply:

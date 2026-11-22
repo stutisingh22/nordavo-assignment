@@ -100,3 +100,16 @@ def test_extra_phrasings_do_not_misfire():
     for text in ["De rechter knop doet niks.", "Waar vind ik Instellingen → Juridisch?",
                  "Hoe upgrade ik naar Plus?", "Kan ik de app op mijn telefoon gebruiken?"]:
         assert g.always_human_hits(text) == [], text
+
+
+def test_contact_details_in_reply_are_blocked():
+    assert "email_address_in_reply" in g.reply_problems("Hallo, mail ons op support@roosterly-help.com. Team Roosterly")
+    assert "phone_number_in_reply" in g.reply_problems("Hallo, bel ons op 020-1234567. Team Roosterly")
+    assert g.reply_problems("Hallo, de link is 60 minuten geldig. Plus kost €6 per medewerker. Team Roosterly") == []
+
+
+def test_look_alike_letters_do_not_bypass_rules():
+    # Greek upsilon and Cyrillic a/e/o instead of Latin letters
+    assert "refund_or_disputed_charge" in g.always_human_hits("Please refυnd last month")
+    assert "legal_threat" in g.always_human_hits("Onze аdvоcаat neemt contact op")
+    assert any(p.startswith("forbidden_promise") for p in g.reply_problems("We geven je kоrting."))
