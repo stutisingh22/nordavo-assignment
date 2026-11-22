@@ -112,3 +112,13 @@ def test_second_run_is_refused_while_locked(tmp_path):
     a.release_lock()
     b.acquire_lock()
     b.release_lock()
+
+
+def test_prefetched_ticket_is_reused_not_fetched_again(env):
+    hd, store = env
+    calls = []
+    real_get = hd.get_ticket
+    hd.get_ticket = lambda tid: calls.append(tid) or real_get(tid)
+    ticket = hd.get_ticket("T1")
+    assert needs_decision(hd, store, "T1", ticket) == (True, None)
+    assert calls == ["T1"]  # only the caller's own GET

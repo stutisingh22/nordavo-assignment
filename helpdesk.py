@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+ACTIONS = ("reply", "handoff", "close")  # the three decision endpoints
 MAX_REQUESTS_PER_SECOND = 4  # API limit is 5; stay under it
 MAX_ATTEMPTS = 6
 BASE_BACKOFF_S = 0.5

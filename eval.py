@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 
 import guardrails as g
-from agent import FAQ_TEXT, decide
+from agent import FAQ_MENU_PATHS, decide
 from helpdesk import HelpdeskClient
 from llm import Gemini
 from verify import make_verifier
@@ -29,7 +29,8 @@ from verify import make_verifier
 OUT_DIR = Path(__file__).resolve().parent / "eval" / "results"
 FIELDS = ["action", "category", "priority", "language"]
 EXTRA_CASES = Path(__file__).resolve().parent / "eval" / "extra_cases.json"
-FAQ_MENU_PATHS = set(g.extract_menu_paths(FAQ_TEXT))
+
+
 def grounding_problems(decision) -> list[str]:
     """Things in a reply that the FAQ does not support."""
     if decision.action != "reply":

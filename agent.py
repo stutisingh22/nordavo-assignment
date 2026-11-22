@@ -1,11 +1,15 @@
 """Decide what to do with one ticket.
 
 Pipeline per ticket:
-  1. redact payment details            (redact.py)
-  2. empty ticket -> close, no LLM call
-  3. one Gemini call: Dutch in, structured JSON out, incl. an English back-translation
-  4. guardrails override the model where client rules demand it   (guardrails.py)
-  5. build the API payload, redacted once more
+  1. strip hidden content (invisible characters, HTML comments/scripts), then mask
+     payment details                                   (guardrails.sanitize_input, redact.py)
+  2. empty ticket -> close; over 4000 characters -> handoff. Neither needs an LLM call.
+  3. one Gemini call: ticket in, structured JSON out, incl. an English back-translation
+  4. guardrails can only make the decision safer (guardrails.py): always-human rules, payment
+     details, unsupported language, reply checks (FAQ citation, confidence, language, links,
+     menu paths, promises, feature claims)
+  5. independent verifier checks every reply against the FAQ; any failure -> handoff (verify.py)
+  6. build the API payload, check it the way the helpdesk would, redact once more
 
 Usage (dry run, prints decisions, posts nothing):  python agent.py T005 T007
 """
@@ -19,6 +23,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import guardrails as g
+from helpdesk import ACTIONS
 from llm import Gemini, LLMError
 from redact import redact, redact_obj
 from verify import verify_reply
@@ -32,7 +37,6 @@ CONFIDENCE_THRESHOLD = 0.7
 LANGUAGES = ["nl", "en", "de"]
 CATEGORIES = ["bug", "billing", "feature_request", "question", "other"]
 PRIORITIES = ["P1", "P2", "P3", "P4"]
-ACTIONS = ["reply", "handoff", "close"]
 RULES = list(g.ALWAYS_HUMAN)
 
 SYSTEM_PROMPT = f"""You triage support tickets for Roosterly, a Dutch shift-planning SaaS.
@@ -89,6 +93,9 @@ The topic decides the category, not the phrasing: a how-to question about invoic
 prices, plans or payments is billing; a "how do I…" about using the app is question.
 
 # Texts
+- detected_language: ISO 639-1 code of the language the customer actually wrote in, whatever it is
+  (e.g. nl, en, de, fr, es, pl). We only answer in nl, en and de: if the customer wrote in any other
+  language, action must be handoff (say which language in the note) and language must be "en".
 - language: the language the customer wrote in: nl, en or de.
 - draft_reply: ONLY when action is reply, otherwise "". Write in the customer's language. Short and friendly,
   greet by first name if they signed; with no name use a plain greeting ("Hallo," / "Hello," / "Hallo,"),
@@ -108,10 +115,11 @@ prices, plans or payments is billing; a "how do I…" about using the app is que
 SCHEMA = {
     "type": "OBJECT",
     "properties": {
+        "detected_language": {"type": "STRING"},
         "language": {"type": "STRING", "enum": LANGUAGES},
         "category": {"type": "STRING", "enum": CATEGORIES},
         "priority": {"type": "STRING", "enum": PRIORITIES},
-        "action": {"type": "STRING", "enum": ACTIONS},
+        "action": {"type": "STRING", "enum": list(ACTIONS)},
         "reason": {"type": "STRING"},
         "faq_ids": {"type": "ARRAY", "items": {"type": "STRING", "enum": sorted(FAQ_IDS)}},
         "rule_triggers": {"type": "ARRAY", "items": {"type": "STRING", "enum": RULES}},
@@ -121,9 +129,9 @@ SCHEMA = {
         "handoff_note": {"type": "STRING"},
         "confidence": {"type": "NUMBER"},
     },
-    "required": ["language", "category", "priority", "action", "reason", "faq_ids", "rule_triggers",
+    "required": ["detected_language", "language", "category", "priority", "action", "reason", "faq_ids", "rule_triggers",
                  "injection_detected", "draft_reply", "reply_en", "handoff_note", "confidence"],
-    "propertyOrdering": ["language", "injection_detected", "rule_triggers", "category", "priority",
+    "propertyOrdering": ["detected_language", "language", "injection_detected", "rule_triggers", "category", "priority",
                          "faq_ids", "action", "draft_reply", "reply_en", "handoff_note", "reason", "confidence"],
 }
 
@@ -229,7 +237,14 @@ def decide(ticket: dict, llm: Gemini, verifier: Gemini | None = None) -> Decisio
 
     lang = out["language"]
     detected, _ = g.detect_language(body)
-    if detected and detected != lang:
+    model_detected = (out.get("detected_language") or "").strip().lower()[:2]
+    unsupported = next((x for x in (model_detected, detected) if x and x not in g.SUPPORTED_LANGUAGES), None)
+    if unsupported:
+        # The client rule (reply in the customer's language) cannot be met and the API cannot record
+        # the language: a human answers. The API field gets "en", the language of the handoff note.
+        force_handoff(f"unsupported_language:{unsupported}")
+        lang = "en"
+    elif detected and detected != lang:
         overrides.append(f"language_corrected:{lang}->{detected}")
         lang = detected
 
@@ -288,6 +303,8 @@ def decide(ticket: dict, llm: Gemini, verifier: Gemini | None = None) -> Decisio
             note = f"{out['reason'].strip()} Please read the ticket."
         if hidden:
             note += f" Warning: hidden content was removed from the ticket ({', '.join(hidden)})."
+        if unsupported:
+            note += f" The customer wrote in '{unsupported}', which we do not answer automatically (only nl/en/de)."
         if payment_found:
             note += " Note: the customer included payment details in the ticket; they were redacted, do not ask them to resend by email."
         if out.get("injection_detected"):

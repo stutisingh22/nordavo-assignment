@@ -13,8 +13,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from llm import PRICES
+
 LOG_DIR = Path(__file__).resolve().parent / "logs"
-PRICES = {"gemini-3.5-flash": (1.50, 9.00), "gemini-3.5-flash-lite": (0.30, 2.50)}  # USD / 1M tokens
 
 
 def latest_log() -> Path:

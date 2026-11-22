@@ -30,16 +30,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-from helpdesk import AlreadyHandled, HelpdeskClient, HelpdeskError
+from helpdesk import ACTIONS, AlreadyHandled, HelpdeskClient, HelpdeskError
 
 STATE_DIR = Path(__file__).resolve().parent / "state"
-ACTIONS = ("reply", "handoff", "close")
 
 
 @dataclass
 class Outcome:
     ticket_id: str
-    status: str  # posted | already_handled | skipped_local_done | failed
+    status: str  # posted | already_handled | failed
     detail: str = ""
 
 
@@ -105,22 +104,20 @@ class StateStore:
         return dest
 
 
-def server_says_handled(hd: HelpdeskClient, ticket_id: str) -> bool:
-    return bool(hd.get_ticket(ticket_id).get("handled"))
-
-
-def needs_decision(hd: HelpdeskClient, store: StateStore, ticket_id: str) -> tuple[bool, dict | None]:
+def needs_decision(hd: HelpdeskClient, store: StateStore, ticket_id: str,
+                   ticket: dict | None = None) -> tuple[bool, dict | None]:
     """Should we work on this ticket?
 
     Returns (yes/no, pending) where pending = {"action", "decision"} if a crash left an unconfirmed
     decision for a ticket the helpdesk still shows as open: resend exactly that, no new LLM call.
 
-    Call this BEFORE spending an LLM call on the ticket.
+    Call this BEFORE spending an LLM call on the ticket. Pass `ticket` if you just fetched it
+    (GET /tickets/{id}) to avoid a second request; otherwise it is fetched here.
     """
     rec = store.latest().get(ticket_id)
     if rec and rec["event"] == "done":
         return False, None
-    if server_says_handled(hd, ticket_id):
+    if (ticket or hd.get_ticket(ticket_id)).get("handled"):
         store.mark_done(ticket_id, rec["action"] if rec else "unknown", "server_already_handled")
         return False, None
     if rec and rec["event"] == "pending":

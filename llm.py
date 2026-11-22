@@ -19,6 +19,8 @@ load_dotenv()
 API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 RETRYABLE = {429, 500, 502, 503, 504}
 MAX_ATTEMPTS = 6
+# List prices (USD per 1M tokens: input, output), used only for cost reporting.
+PRICES = {"gemini-3.5-flash": (1.50, 9.00), "gemini-3.5-flash-lite": (0.30, 2.50)}
 
 
 class LLMError(Exception):

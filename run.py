@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import uuid
@@ -19,19 +20,37 @@ from pathlib import Path
 
 from agent import InvalidDecision, decide
 from helpdesk import HelpdeskClient, HelpdeskError
-from llm import Gemini, LLMError
+from llm import PRICES, Gemini, LLMError
 from redact import redact_obj
 from state import StateStore, needs_decision, post_once
 from verify import make_verifier
 
 LOG_DIR = Path(__file__).resolve().parent / "logs"
-# List prices (USD per 1M tokens: input, output), used only for the cost line in the summary.
-PRICES = {"gemini-3.5-flash": (1.50, 9.00), "gemini-3.5-flash-lite": (0.30, 2.50)}
 
 
 def cost_usd(llm: Gemini) -> float:
     p_in, p_out = PRICES.get(llm.model, (0.0, 0.0))
     return llm.usage.input_tokens / 1e6 * p_in + llm.usage.output_tokens / 1e6 * p_out
+
+
+def preflight(hd: HelpdeskClient, attempts: int = 4, wait_s: int = 30) -> dict:
+    """GET /status before touching any ticket (Nordavo FAQ: "wait a minute and try GET /status").
+
+    Each call already retries 503s and network errors; if the helpdesk is still down after
+    ~2 minutes we stop with a clear message instead of failing ticket by ticket.
+    """
+    for i in range(1, attempts + 1):
+        try:
+            return hd.status()
+        except HelpdeskError as exc:
+            if exc.status in (400, 401, 404):  # config problem (key, email, URL): waiting will not help
+                sys.exit(f"Helpdesk refused the request ({exc.status} {exc.error}): check .env")
+            print(f"helpdesk not responding ({exc.status} {exc.error}), attempt {i}/{attempts}"
+                  + (f", retrying in {wait_s}s" if i < attempts else ""))
+            if i < attempts:
+                time.sleep(wait_s)
+    sys.exit("Helpdesk still not responding after ~2 minutes. No ticket was touched. "
+             "Try again later; if it persists, email Nordavo (they move the deadline if it is on their side).")
 
 
 def log_line(fh, record: dict) -> None:
@@ -45,6 +64,8 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true", help="decide but do not post")
     ap.add_argument("--only", default="", help="comma-separated ticket ids")
     args = ap.parse_args()
+    if args.reset and args.dry_run:
+        sys.exit("--reset with --dry-run makes no sense")
 
     hd, store, llm, verifier = HelpdeskClient(), StateStore(), Gemini(), make_verifier()
     store.acquire_lock()
@@ -54,9 +75,10 @@ def main() -> int:
     counts: dict[str, int] = {}
 
     try:
+        st = preflight(hd)
+        print(f"helpdesk: mode={st.get('mode')} account={st.get('candidate')} <{os.environ.get('CANDIDATE_EMAIL')}> "
+              f"open={st.get('open_tickets')} handled={st.get('handled_tickets')}")
         if args.reset:
-            if args.dry_run:
-                sys.exit("--reset with --dry-run makes no sense")
             print("reset:", hd.reset())
             if old := store.archive():
                 print(f"archived old journal -> {old.name}")
@@ -76,7 +98,8 @@ def main() -> int:
             for tid in ids:
                 rec = {"run_id": run_id, "ticket_id": tid, "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
                 try:
-                    todo, pending = needs_decision(hd, store, tid)
+                    ticket = hd.get_ticket(tid)  # one GET: the 'handled' check and the text
+                    todo, pending = needs_decision(hd, store, tid, ticket)
                     if not todo:
                         rec["outcome"] = "skipped_already_handled"
                     elif pending:
@@ -86,7 +109,6 @@ def main() -> int:
                             post_once(hd, store, tid, pending["action"], pending["decision"]).status
                     else:
                         calls_before, v_before = llm.usage.calls, verifier.usage.calls
-                        ticket = hd.get_ticket(tid)
                         d = decide(ticket, llm, verifier)
                         tokens = llm.usage.by_call[-1] if llm.usage.calls > calls_before else (0, 0)
                         v_tokens = verifier.usage.by_call[-1] if verifier.usage.calls > v_before else (0, 0)
