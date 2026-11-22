@@ -75,11 +75,16 @@ integrations or links. If the help centre does not answer it, a human handles it
   cancellations, GDPR requests, threats to leave, payroll deadlines).
 - P3: something is wrong or unclear, but there is a workaround.
 - P4: no urgency: how-to questions, ideas, cosmetic issues, spam.
+P2 vs P3 for problems: ask "can the customer still get the job done today?". If a core task fails
+(publishing the rota, clocking in, logging in, exporting hours) and neither the ticket nor the help centre
+gives a workaround, the customer is blocked: P2. Use P3 only when a workaround exists or the impact is limited.
 
 # Category
 bug (product broken or behaving wrongly), billing (prices, plans, invoices, payments, refunds),
 feature_request (asks for something new), question (how-to / information),
 other (spam, privacy/GDPR requests, legal matters, anything else).
+The topic decides the category, not the phrasing: a how-to question about invoices, invoice details,
+prices, plans or payments is billing; a "how do I…" about using the app is question.
 
 # Texts
 - language: the language the customer wrote in: nl, en or de.
