@@ -44,7 +44,8 @@ def test_redact_obj_nested():
 
 def test_run_ids_and_timestamps_survive_redaction():
     # Log metadata must stay readable: "20261122-164530" looked like a card number.
-    for text in ["20261122T164530-e7d173", "2026-11-22T16:45:30+0100"]:
+    for text in ["20261122T164530-e7d173", "2026-11-22T16:45:30+0100", "20261122T223915-1781a2",
+                 "run_20261122T223915-1781a2.jsonl"]:
         assert redact(text) == (text, False)
 
 

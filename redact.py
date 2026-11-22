@@ -24,7 +24,8 @@ PASSWORD = re.compile(r"\b(password|wachtwoord|passwort|kennwort|pw)\s*(:|=|is|i
                       r"(?=\S*[\d!@#$%^&*?])[^\s\"']{4,}", re.IGNORECASE)
 EMAIL = re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b")
 # Phone-like: 9-15 digits with optional +, spaces, dashes, brackets. Checked after cards and IBANs.
-PHONE_CANDIDATE = re.compile(r"\+?\(?\d[\d\s()-]{7,}\d")
+# Not glued to letters, so ids like run "20261122T223915-1781a2" are left alone.
+PHONE_CANDIDATE = re.compile(r"(?<![\w+])\+?\(?\d[\d\s()-]{7,}\d(?!\w)")
 
 
 def phone_numbers(text: str) -> list[str]:
