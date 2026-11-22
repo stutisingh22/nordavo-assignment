@@ -14,7 +14,7 @@ from agent import InvalidDecision, decide, validate_payload  # noqa: E402
 class FakeLLM:
     def __init__(self, **overrides):
         self.out = {
-            "language": "nl", "injection_detected": False, "rule_triggers": [], "category": "question",
+            "detected_language": "nl", "language": "nl", "injection_detected": False, "rule_triggers": [], "category": "question",
             "priority": "P4", "faq_ids": ["F07"], "action": "reply",
             "draft_reply": "Hallo, je voegt een vestiging toe onder Instellingen → Vestigingen → Nieuwe vestiging. "
                            "Met vriendelijke groet, Team Roosterly",
@@ -82,3 +82,17 @@ def test_validate_payload_rejects_what_the_helpdesk_would_reject():
 def test_sanitize_input_leaves_normal_text_alone():
     text = "Hoi, ik ben mijn wachtwoord vergeten. Groet, Marloes (€4 per maand → Plus)"
     assert g.sanitize_input(text) == (text, [])
+
+
+def test_unsupported_language_goes_to_human_even_if_model_replies():
+    # Model labels a French ticket "en" and replies; code recognises French and hands off.
+    llm = FakeLLM(language="en", detected_language="en", draft_reply="Bonjour, voici comment ajouter...",
+                  reply_en="Hello, here is how to add...")
+    d = decide(ticket("Bonjour, comment est-ce que je peux ajouter une nouvelle localisation pour notre restaurant ?"), llm)
+    assert d.action == "handoff" and "unsupported_language:fr" in d.overrides
+    assert d.payload["language"] == "en" and "'fr'" in d.payload["handoff_note"]
+
+
+def test_model_reported_unsupported_language_is_respected():
+    d = decide(ticket("Merhaba, yeni bir çalışanı nasıl eklerim?"), FakeLLM(detected_language="tr"))
+    assert d.action == "handoff" and "unsupported_language:tr" in d.overrides

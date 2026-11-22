@@ -78,7 +78,17 @@ STOPWORDS = {
           "your are be this have has from at as or but if will".split(),
     "de": "der die das und ist ich wir nicht von für auf zu mit kann wie was wo bitte unsere mein dass es "
           "auch gibt sie ihr ihre sind wird bei den dem ein eine zum zur oder".split(),
+    # Unsupported languages: only so we can recognise them and hand the ticket to a human.
+    "fr": "le la les et est je nous vous pas pour sur avec comment quoi o\u00f9 notre mon que une des du au "
+          "bonjour merci".split(),
+    "es": "el los las y es yo nosotros no para con c\u00f3mo qu\u00e9 d\u00f3nde nuestro mi que una del al "
+          "hola gracias por".split(),
+    "it": "il lo gli e \u00e8 io noi non per con come cosa dove nostro mio che una del al ciao grazie".split(),
+    "pt": "o os e \u00e9 eu n\u00f3s n\u00e3o para com como que onde nosso meu uma do ao ol\u00e1 obrigado".split(),
+    "pl": "i jest nie na do z jak co gdzie nasz m\u00f3j \u017ce si\u0119 to dzie\u0144 dobry dzi\u0119kuj\u0119".split(),
+    "tr": "ve bir bu i\u00e7in ile nas\u0131l ne nerede bizim benim de da mi merhaba te\u015fekk\u00fcrler".split(),
 }
+SUPPORTED_LANGUAGES = {"nl", "en", "de"}
 
 
 def detect_language(text: str) -> tuple[str | None, dict]:
