@@ -40,3 +40,9 @@ def test_redact_obj_nested():
     obj = {"note": "card 4111 1111 1111 1111", "n": 3, "list": ["NL91ABNA0417164300"]}
     out = redact_obj(obj)
     assert "4111" not in out["note"] and out["n"] == 3 and "ABNA" not in out["list"][0]
+
+
+def test_run_ids_and_timestamps_survive_redaction():
+    # Log metadata must stay readable: "20261122-164530" looked like a card number.
+    for text in ["20261122T164530-e7d173", "2026-11-22T16:45:30+0100"]:
+        assert redact(text) == (text, False)

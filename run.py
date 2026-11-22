@@ -48,7 +48,7 @@ def main() -> int:
 
     hd, store, llm, verifier = HelpdeskClient(), StateStore(), Gemini(), make_verifier()
     store.acquire_lock()
-    run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
+    run_id = time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:6]
     LOG_DIR.mkdir(exist_ok=True)
     log_path = LOG_DIR / f"run_{run_id}{'_dry' if args.dry_run else ''}.jsonl"
     counts: dict[str, int] = {}
@@ -69,6 +69,9 @@ def main() -> int:
         print(f"run {run_id}: {len(ids)} open tickets, model={llm.model}, thinking={llm.thinking or 'default'}"
               f"{' (DRY RUN)' if args.dry_run else ''}")
 
+        if not ids:
+            print("nothing to do: no open tickets")
+            return 0
         with open(log_path, "a", encoding="utf-8") as log:
             for tid in ids:
                 rec = {"run_id": run_id, "ticket_id": tid, "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
@@ -82,10 +85,13 @@ def main() -> int:
                         rec["outcome"] = "dry_run" if args.dry_run else \
                             post_once(hd, store, tid, pending["action"], pending["decision"]).status
                     else:
-                        calls_before = llm.usage.calls
-                        d = decide(hd.get_ticket(tid), llm, verifier)
+                        calls_before, v_before = llm.usage.calls, verifier.usage.calls
+                        ticket = hd.get_ticket(tid)
+                        d = decide(ticket, llm, verifier)
                         tokens = llm.usage.by_call[-1] if llm.usage.calls > calls_before else (0, 0)
+                        v_tokens = verifier.usage.by_call[-1] if verifier.usage.calls > v_before else (0, 0)
                         rec.update(
+                            subject=ticket.get("subject"), customer_plan=ticket.get("customer_plan"),
                             action=d.action, model_action=d.model_action, overrides=d.overrides,
                             language=d.payload["language"], category=d.payload["category"],
                             priority=d.payload["priority"], confidence=d.payload["confidence"],
@@ -95,6 +101,8 @@ def main() -> int:
                             reply_en=d.reply_en or None, verified_en=d.verified_en or None,
                             handoff_note=d.payload.get("handoff_note"),
                             tokens_in=tokens[0], tokens_out=tokens[1],
+                            verifier_tokens_in=v_tokens[0], verifier_tokens_out=v_tokens[1],
+                            model=llm.model, verifier_model=verifier.model if v_tokens[0] else None,
                         )
                         rec["outcome"] = "dry_run" if args.dry_run else \
                             post_once(hd, store, tid, d.action, d.payload).status
