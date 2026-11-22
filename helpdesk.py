@@ -17,6 +17,7 @@ import os
 import random
 import threading
 import time
+from collections import Counter
 from typing import Any, Iterator
 
 import httpx
@@ -78,6 +79,8 @@ class HelpdeskClient:
         self._lock = threading.Lock()
         self._last_request_at = 0.0
         self._min_interval = 1.0 / MAX_REQUESTS_PER_SECOND
+        # Evidence for the run summary: how often the helpdesk's deliberate failures were absorbed.
+        self.stats: Counter = Counter()
 
     # ---- low level -------------------------------------------------------
 
@@ -97,9 +100,11 @@ class HelpdeskClient:
         last_exc: Exception | None = None
         for attempt in range(MAX_ATTEMPTS):
             self._throttle()
+            self.stats["requests"] += 1
             try:
                 resp = self._http.request(method, path, **kwargs)
             except httpx.TransportError as exc:  # timeout, connection reset, DNS...
+                self.stats["network_error_retried"] += 1
                 last_exc = exc
                 time.sleep(self._backoff(attempt))
                 continue
@@ -114,10 +119,12 @@ class HelpdeskClient:
             error = body.get("error", "unknown") if isinstance(body, dict) else "unknown"
 
             if resp.status_code == 503:
+                self.stats["503_retried"] += 1
                 last_exc = HelpdeskError(503, error, body)
                 time.sleep(self._backoff(attempt))
                 continue
             if resp.status_code == 429:
+                self.stats["429_waited"] += 1
                 last_exc = HelpdeskError(429, error, body)
                 try:
                     retry_after = float(resp.headers.get("Retry-After", "1"))
@@ -126,6 +133,7 @@ class HelpdeskClient:
                 time.sleep(retry_after + random.uniform(0, 0.25))
                 continue
             if resp.status_code == 409:
+                self.stats["409_already_handled"] += 1
                 raise AlreadyHandled(409, error, body)
             if resp.status_code == 404:
                 raise NotFound(404, error, body)

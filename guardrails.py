@@ -169,6 +169,31 @@ def existence_claim(reply_en: str) -> str | None:
     return m.group(0) if m else None
 
 
+# --- 6. Input side: clean the ticket before the model sees it -----------------------
+# Hidden text (zero-width/bidi characters, HTML comments, scripts) can carry instructions a human
+# reading the helpdesk never sees. We strip it and flag it, so the handoff note can warn.
+INVISIBLE = re.compile(r"[​-‏‪-‮⁠-⁤⁦-⁩﻿­]")
+HIDDEN_HTML = re.compile(r"<!--.*?-->|<(script|style)\b.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+HTML_TAG = re.compile(r"</?[a-zA-Z][^>]{0,200}>")
+# Longer than any real support message; triaging it automatically is unsafe and expensive.
+MAX_TICKET_CHARS = 4000
+
+
+def sanitize_input(text: str) -> tuple[str, list[str]]:
+    """Return (clean text, list of what was removed)."""
+    removed = []
+    if INVISIBLE.search(text):
+        removed.append("invisible_characters")
+        text = INVISIBLE.sub("", text)
+    if HIDDEN_HTML.search(text):
+        removed.append("hidden_html")
+        text = HIDDEN_HTML.sub(" ", text)
+    if HTML_TAG.search(text):
+        removed.append("html_tags")
+        text = HTML_TAG.sub(" ", text)
+    return text, removed
+
+
 PRIORITY_ORDER = ["P1", "P2", "P3", "P4"]
 
 

@@ -35,7 +35,9 @@ Split the reply into sentences. For EACH sentence give:
 Then:
 - promises: anything promised that only a human can grant (refund, discount, credit, call-back, deadline).
 - answers_question: does the reply address what the customer actually asked?
-- language_ok: is the reply fluent, correct and polite in its language (no garbled or mixed-language text)?
+- language_ok: false only if the language would confuse or embarrass: wrong grammar that changes the meaning,
+  garbled characters, broken or mixed-language sentences (Dutch menu names in brackets are fine), or rude tone.
+  Minor style preferences (e.g. a greeting without a name) are NOT a reason for false.
 - reply_language: the language the reply is written in (nl, en, de).
 """
 

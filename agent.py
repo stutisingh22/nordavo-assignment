@@ -78,6 +78,8 @@ integrations or links. If the help centre does not answer it, a human handles it
 P2 vs P3 for problems: ask "can the customer still get the job done today?". If a core task fails
 (publishing the rota, clocking in, logging in, exporting hours) and neither the ticket nor the help centre
 gives a workaround, the customer is blocked: P2. Use P3 only when a workaround exists or the impact is limited.
+If the help centre itself solves the problem (e.g. a forgotten password, F01), the customer is not blocked:
+it is a how-to (P4), or P3 if something is genuinely wrong but explained (e.g. an unsupported OS, F12).
 
 # Category
 bug (product broken or behaving wrongly), billing (prices, plans, invoices, payments, refunds),
@@ -89,7 +91,8 @@ prices, plans or payments is billing; a "how do I…" about using the app is que
 # Texts
 - language: the language the customer wrote in: nl, en or de.
 - draft_reply: ONLY when action is reply, otherwise "". Write in the customer's language. Short and friendly,
-  greet by first name if they signed, give the exact steps from the help centre.
+  greet by first name if they signed; with no name use a plain greeting ("Hallo," / "Hello," / "Hallo,"),
+  never "Beste," or "Dear," on its own. Give the exact steps from the help centre.
   Menu paths: copy them exactly as written in the help centre, e.g. "Instellingen → Abonnement → Facturen".
   Never shorten, combine or invent a path. Keep the Dutch menu names; in en/de replies add the English
   meaning in brackets exactly as the help centre gives it. Never translate menu names yourself.
@@ -139,6 +142,30 @@ class Decision:
     payment_details_found: bool = False
 
 
+class InvalidDecision(ValueError):
+    """The decision would be rejected by the helpdesk (422) or is incomplete. Never posted."""
+
+
+def validate_payload(action: str, payload: dict) -> None:
+    """Check what we are about to POST against the helpdesk's rules, independent of the model schema."""
+    problems = []
+    if action not in ACTIONS:
+        problems.append(f"action={action!r}")
+    for key, allowed in (("language", LANGUAGES), ("category", CATEGORIES), ("priority", PRIORITIES)):
+        if payload.get(key) not in allowed:
+            problems.append(f"{key}={payload.get(key)!r}")
+    if not str(payload.get("reason", "")).strip():
+        problems.append("empty reason")
+    if action == "reply" and not str(payload.get("draft_reply", "")).strip():
+        problems.append("reply without draft_reply")
+    if action == "handoff" and not str(payload.get("handoff_note", "")).strip():
+        problems.append("handoff without handoff_note")
+    if not 0 <= payload.get("confidence", 0) <= 1:
+        problems.append("confidence out of range")
+    if problems:
+        raise InvalidDecision("; ".join(problems))
+
+
 def render_ticket(t: dict, subject: str, body: str) -> str:
     return (
         "<ticket>\n"
@@ -150,8 +177,12 @@ def render_ticket(t: dict, subject: str, body: str) -> str:
 
 def decide(ticket: dict, llm: Gemini, verifier: Gemini | None = None) -> Decision:
     tid = ticket["id"]
-    subject, s_found = redact(ticket.get("subject") or "")
-    body, b_found = redact(ticket.get("body") or "")
+    # Input side: strip hidden content, then mask payment details, before anything else sees the text.
+    subject, s_hidden = g.sanitize_input(ticket.get("subject") or "")
+    body, b_hidden = g.sanitize_input(ticket.get("body") or "")
+    hidden = sorted(set(s_hidden + b_hidden))
+    subject, s_found = redact(subject)
+    body, b_found = redact(body)
     payment_found = s_found or b_found
 
     # Empty ticket: nothing to answer. No LLM call needed.
@@ -162,11 +193,22 @@ def decide(ticket: dict, llm: Gemini, verifier: Gemini | None = None) -> Decisio
             "reason": "Empty ticket: no message body, nothing to answer.", "confidence": 0.95,
         }, model_action=None, overrides=["empty_body"], payment_details_found=payment_found)
 
+    # Far longer than a real support message (pasted logs, spam, an attack): a human reads it.
+    if len(body) > g.MAX_TICKET_CHARS:
+        lang, _ = g.detect_language(body[:2000])
+        return Decision(tid, "handoff", redact_obj({
+            "language": lang or "nl", "category": "other", "priority": "P3",
+            "reason": f"Ticket is {len(body)} characters, too long to triage automatically; a human reads it.",
+            "handoff_note": f"Very long ticket ({len(body)} characters), not triaged automatically. "
+                            f"Subject: {subject[:120]}. Please read it in full.",
+            "confidence": 0.5,
+        }), model_action=None, overrides=["too_long_for_auto_triage"], payment_details_found=payment_found)
+
     ticket_block = render_ticket(ticket, subject, body)
     out = llm.generate_json(SYSTEM_PROMPT, ticket_block, SCHEMA)
     model_action = out["action"]
     action, priority = model_action, out["priority"]
-    overrides: list[str] = []
+    overrides: list[str] = [f"input_cleaned:{h}" for h in hidden]
 
     def force_handoff(why: str) -> None:
         nonlocal action
@@ -237,13 +279,22 @@ def decide(ticket: dict, llm: Gemini, verifier: Gemini | None = None) -> Decisio
     if action == "reply":
         payload["draft_reply"] = out["draft_reply"].strip()
     elif action == "handoff":
-        note = out.get("handoff_note", "").strip() or "Automatic triage could not summarise this ticket; please read it."
+        note = out.get("handoff_note", "").strip()
+        note_lang, _ = g.detect_language(note)
+        if note_lang and note_lang != "en":
+            overrides.append(f"handoff_note_not_english:{note_lang}")
+            note = ""
+        if not note:  # fall back to the (English) reason so the human still gets a summary
+            note = f"{out['reason'].strip()} Please read the ticket."
+        if hidden:
+            note += f" Warning: hidden content was removed from the ticket ({', '.join(hidden)})."
         if payment_found:
             note += " Note: the customer included payment details in the ticket; they were redacted, do not ask them to resend by email."
         if out.get("injection_detected"):
             note += " Warning: the ticket contains instructions aimed at our AI; they were ignored."
         payload["handoff_note"] = note
 
+    validate_payload(action, payload)
     return Decision(
         ticket_id=tid, action=action, payload=redact_obj(payload), model_action=model_action,
         overrides=overrides, faq_ids=out.get("faq_ids", []), reply_en=redact(out.get("reply_en", ""))[0],
@@ -253,11 +304,14 @@ def decide(ticket: dict, llm: Gemini, verifier: Gemini | None = None) -> Decisio
 
 
 if __name__ == "__main__":
-    tickets = {t["id"]: t for t in json.loads((Path(__file__).parent / "data" / "tickets.json").read_text())}
+    # Try the agent on specific tickets without posting anything:  python agent.py T005 T007
+    from helpdesk import HelpdeskClient
     from verify import make_verifier
-    llm, verifier = Gemini(), make_verifier()
-    for tid in sys.argv[1:] or list(tickets)[:3]:
-        d = decide(tickets[tid], llm, verifier)
+    if len(sys.argv) < 2:
+        sys.exit("usage: python agent.py <ticket id> [<ticket id> ...]   (decides, never posts)")
+    hd, llm, verifier = HelpdeskClient(), Gemini(), make_verifier()
+    for tid in sys.argv[1:]:
+        d = decide(hd.get_ticket(tid), llm, verifier)
         print(f"\n=== {tid}: {d.action} (model said {d.model_action}) overrides={d.overrides}")
         print(json.dumps(d.payload, ensure_ascii=False, indent=2))
         if d.reply_en:

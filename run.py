@@ -17,7 +17,7 @@ import time
 import uuid
 from pathlib import Path
 
-from agent import decide
+from agent import InvalidDecision, decide
 from helpdesk import HelpdeskClient, HelpdeskError
 from llm import Gemini, LLMError
 from redact import redact_obj
@@ -111,6 +111,9 @@ def main() -> int:
                     rec.update(outcome="llm_failed_left_open", error=str(exc)[:200])
                 except HelpdeskError as exc:
                     rec.update(outcome="helpdesk_error_left_open", error=f"{exc.status} {exc.error}")
+                except InvalidDecision as exc:
+                    # The decision would be rejected or is incomplete: never post it, a rerun retries.
+                    rec.update(outcome="invalid_decision_left_open", error=str(exc)[:200])
 
                 counts[rec["outcome"]] = counts.get(rec["outcome"], 0) + 1
                 log_line(log, rec)
@@ -126,6 +129,10 @@ def main() -> int:
         print(f"{name} {m.model}: {u.calls} calls, {u.input_tokens} in / {u.output_tokens} out tokens, "
               f"~${cost_usd(m):.3f}")
     print(f"total ~${cost_usd(llm) + cost_usd(verifier):.3f}")
+    st = hd.stats
+    print(f"helpdesk: {st['requests']} requests, {st['503_retried']} x 503 retried, "
+          f"{st['429_waited']} x 429 waited, {st['network_error_retried']} network errors retried, "
+          f"{st['409_already_handled']} x 409")
     print(f"log: {log_path.relative_to(Path(__file__).resolve().parent)}")
     failed = sum(v for k, v in counts.items() if "left_open" in k or k == "failed")
     if failed:
