@@ -41,6 +41,17 @@ class Usage:
         self.by_call.append((i, o))
 
 
+def _retry_delay_s(resp: httpx.Response) -> float | None:
+    """Gemini puts the wait time in a RetryInfo detail, e.g. "retryDelay": "42s"."""
+    try:
+        for det in resp.json()["error"].get("details", []):
+            if det.get("@type", "").endswith("RetryInfo"):
+                return float(det["retryDelay"].rstrip("s"))
+    except (ValueError, KeyError, AttributeError):
+        pass
+    return None
+
+
 class Gemini:
     def __init__(self, model: str | None = None, api_key: str | None = None, timeout_s: float = 90):
         self.model = model or os.environ.get("LLM_MODEL", "gemini-3.5-flash")
@@ -49,6 +60,8 @@ class Gemini:
             raise RuntimeError("Missing GEMINI_API_KEY (see .env.example)")
         self._http = httpx.Client(headers={"x-goog-api-key": key}, timeout=timeout_s)
         self.usage = Usage()
+        # Hidden "thinking" tokens are billed as output. "" = model default; else low/medium/high.
+        self.thinking = os.environ.get("LLM_THINKING", "").strip().lower()
 
     def generate_json(self, system: str, user: str, schema: dict) -> dict:
         body = {
@@ -60,6 +73,8 @@ class Gemini:
                 "responseSchema": schema,
             },
         }
+        if self.thinking:
+            body["generationConfig"]["thinkingConfig"] = {"thinkingLevel": self.thinking}
         url = API.format(model=self.model)
         last = ""
         for attempt in range(MAX_ATTEMPTS):
@@ -78,6 +93,13 @@ class Gemini:
                         last = f"unparseable response: {exc}"  # retry once more, then give up
                 elif resp.status_code in RETRYABLE:
                     last = f"HTTP {resp.status_code}"
+                    delay = _retry_delay_s(resp)
+                    if delay is not None and delay > 120:
+                        # Quota exhausted (e.g. free-tier daily cap): retrying now cannot help.
+                        raise LLMError(f"quota exhausted, retry in {delay:.0f}s: {resp.text[:200]}")
+                    if delay is not None:
+                        time.sleep(delay)
+                        continue
                 else:
                     raise LLMError(f"HTTP {resp.status_code}: {resp.text[:300]}")
             time.sleep(random.uniform(0, min(30, 1.0 * 2**attempt)))
