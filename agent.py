@@ -19,8 +19,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import guardrails as g
-from llm import Gemini
+from llm import Gemini, LLMError
 from redact import redact, redact_obj
+from verify import verify_reply
 
 FAQ_PATH = Path(__file__).resolve().parent / "knowledge" / "faq.md"
 FAQ_TEXT = FAQ_PATH.read_text(encoding="utf-8")
@@ -127,7 +128,8 @@ class Decision:
     model_action: str | None = None  # what the model wanted, before guardrails
     overrides: list[str] = field(default_factory=list)
     faq_ids: list[str] = field(default_factory=list)
-    reply_en: str = ""
+    reply_en: str = ""              # drafter's own back-translation
+    verified_en: str = ""           # independent checker's translation (verify.py)
     injection_detected: bool = False
     payment_details_found: bool = False
 
@@ -141,7 +143,7 @@ def render_ticket(t: dict, subject: str, body: str) -> str:
     )
 
 
-def decide(ticket: dict, llm: Gemini) -> Decision:
+def decide(ticket: dict, llm: Gemini, verifier: Gemini | None = None) -> Decision:
     tid = ticket["id"]
     subject, s_found = redact(ticket.get("subject") or "")
     body, b_found = redact(ticket.get("body") or "")
@@ -155,7 +157,8 @@ def decide(ticket: dict, llm: Gemini) -> Decision:
             "reason": "Empty ticket: no message body, nothing to answer.", "confidence": 0.95,
         }, model_action=None, overrides=["empty_body"], payment_details_found=payment_found)
 
-    out = llm.generate_json(SYSTEM_PROMPT, render_ticket(ticket, subject, body), SCHEMA)
+    ticket_block = render_ticket(ticket, subject, body)
+    out = llm.generate_json(SYSTEM_PROMPT, ticket_block, SCHEMA)
     model_action = out["action"]
     action, priority = model_action, out["priority"]
     overrides: list[str] = []
@@ -202,6 +205,17 @@ def decide(ticket: dict, llm: Gemini) -> Decision:
             # can be a real FAQ fact (iOS 15 is not supported, F12).
             force_handoff(f"ungrounded_feature_claim:{claim}")
 
+    # Last gate for replies: an independent model checks the reply against the FAQ (verify.py).
+    verified_en = ""
+    if action == "reply" and verifier is not None:
+        try:
+            v = verify_reply(verifier, FAQ_TEXT, ticket_block, out["draft_reply"].strip(), lang)
+            verified_en = v.translation_en
+            if not v.passed:
+                force_handoff("verifier:" + ";".join(v.problems)[:300])
+        except LLMError as exc:
+            force_handoff(f"verifier_unavailable:{str(exc)[:80]}")  # fail closed
+
     if action == "close" and (out["confidence"] < CONFIDENCE_THRESHOLD):
         force_handoff(f"low_confidence_close:{out['confidence']:.2f}")
 
@@ -228,15 +242,17 @@ def decide(ticket: dict, llm: Gemini) -> Decision:
     return Decision(
         ticket_id=tid, action=action, payload=redact_obj(payload), model_action=model_action,
         overrides=overrides, faq_ids=out.get("faq_ids", []), reply_en=redact(out.get("reply_en", ""))[0],
+        verified_en=redact(verified_en)[0],
         injection_detected=bool(out.get("injection_detected")), payment_details_found=payment_found,
     )
 
 
 if __name__ == "__main__":
     tickets = {t["id"]: t for t in json.loads((Path(__file__).parent / "data" / "tickets.json").read_text())}
-    llm = Gemini()
+    from verify import make_verifier
+    llm, verifier = Gemini(), make_verifier()
     for tid in sys.argv[1:] or list(tickets)[:3]:
-        d = decide(tickets[tid], llm)
+        d = decide(tickets[tid], llm, verifier)
         print(f"\n=== {tid}: {d.action} (model said {d.model_action}) overrides={d.overrides}")
         print(json.dumps(d.payload, ensure_ascii=False, indent=2))
         if d.reply_en:

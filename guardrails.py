@@ -16,27 +16,42 @@ ALWAYS_HUMAN: dict[str, list[str]] = {
         r"terugbetal", r"terugstort", r"terug\s?storten", r"geld terug", r"terugkrijgen", r"terug krijgen",
         r"refund", r"money back", r"charged twice", r"double charged", r"dubbel afgeschreven",
         r"twee keer .{0,30}afgeschreven", r"r[uü]ckerstatt", r"erstattung", r"geld zur[uü]ck",
+        r"storne", r"terugboek", r"crediter", r"creditnota", r"betwist", r"chargeback",
+        r"onterecht .{0,30}(afgeschreven|gefactureerd|in rekening|betaald)",
+        r"te ?veel .{0,15}(betaald|gefactureerd|afgeschreven|in rekening)", r"overcharged", r"wrongly charged",
+        r"zu viel berechnet", r"doppelt abgebucht",
     ],
     "cancellation_or_contract_change": [
         r"opzeg", r"zeggen we op", r"zeg ik op", r"abonnement .{0,20}(stoppen|be[eë]indigen)",
         r"cancel (our|my|the)? ?(subscription|account|contract|plan)", r"terminate", r"k[uü]ndig",
+        r"(account|abonnement) .{0,15}(opheffen|verwijderen)", r"downgrad",
+        r"contract .{0,20}(wijzig|aanpass|be[eë]indig)", r"close (my|our) account",
+        r"end (our|my|the) contract", r"vertrag .{0,20}beenden",
     ],
     "personal_data_request": [
         r"\bavg\b", r"\bgdpr\b", r"\bdsgvo\b", r"persoonsgegevens", r"inzageverzoek", r"inzage in",
         r"gegevens .{0,30}verwijder", r"personal data", r"delete my data", r"personenbezogen",
+        r"recht op (vergetelheid|inzage)", r"right to be forgotten", r"datenschutz", r"daten .{0,20}l[oö]schen",
     ],
     "security_incident": [
         r"gehackt", r"hacked", r"datalek", r"data ?breach", r"vreemde login", r"verdachte login",
         r"suspicious login", r"niet wij", r"wasn'?t us", r"waren wij niet", r"onbekende? .{0,20}ingelogd",
         r"phishing", r"unauthori[sz]ed", r"inbraak",
+        r"account .{0,20}overgenomen", r"verdachte (activiteit|mail|inlog)", r"beveiligingslek",
+        r"kwetsbaarhe", r"vulnerabilit", r"compromis", r"sicherheitsl[uü]cke",
+        r"wachtwoord .{0,20}(gelekt|gestolen)", r"someone else .{0,20}(logged|access)",
     ],
     "legal_threat": [
         r"advoca", r"lawyer", r"attorney", r"anwalt", r"rechtszaak", r"juridische stappen",
         r"schadevergoeding", r"aansprakelijk", r"legal action", r"\bsue\b", r"compensation", r"schadenersatz",
+        r"rechtsanwalt", r"\bklage\b", r"gerichtlich", r"ingebrekestelling", r"naar de rechter", r"\bjurist",
+        r"lawsuit", r"\bcourt\b",
     ],
     "threat_to_leave": [
         r"zeggen we op", r"overstappen", r"andere aanbieder", r"concurrent", r"we gaan weg",
         r"switch(ing)? to (another|a different|a competitor)", r"leave roosterly", r"anbieter wechseln",
+        r"stoppen met (roosterly|jullie)", r"we stappen over", r"(overweeg|overwegen) .{0,30}(stoppen|over te stappen)",
+        r"looking for (an )?alternative", r"other provider",
     ],
 }
 # Minimum priority per rule (P1 = most urgent). Security/legal are P1 by the brief's definition.

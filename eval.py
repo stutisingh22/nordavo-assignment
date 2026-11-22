@@ -24,6 +24,7 @@ import guardrails as g
 from agent import FAQ_TEXT, decide
 from helpdesk import HelpdeskClient
 from llm import Gemini
+from verify import make_verifier
 
 OUT_DIR = Path(__file__).resolve().parent / "eval" / "results"
 FIELDS = ["action", "category", "priority", "language"]
@@ -61,6 +62,7 @@ def score_one(example: dict, decision) -> dict:
     row["source"] = example.get("source", "nordavo")
     row["overrides"] = decision.overrides
     row["reply_en"] = decision.reply_en
+    row["verified_en"] = decision.verified_en
     row["nordavo_reason"] = label.get("reason", "")
     row["agent_reason"] = decision.payload.get("reason", "")
     return row
@@ -92,11 +94,11 @@ def main() -> None:
         examples.append({**t, "label": case["label"], "source": "ours",
                          "reply_must_be_grounded": case.get("reply_must_be_grounded", False)})
     hd.close_client()
-    llm = Gemini()
+    llm, verifier = Gemini(), make_verifier()
 
     runs = []
     for r in range(args.repeat):
-        rows = [score_one(ex, decide(ex, llm)) for ex in examples]
+        rows = [score_one(ex, decide(ex, llm, verifier)) for ex in examples]
         runs.append({"rows": rows, "summary": summarise(rows)})
 
     # Print the last run in detail, plus the summary of every run
@@ -121,12 +123,16 @@ def main() -> None:
               f"ungrounded replies {s['ungrounded_replies']}")
     u = llm.usage
     print(f"tokens: {u.calls} calls, in={u.input_tokens}, out={u.output_tokens}, model={llm.model}, thinking={llm.thinking or 'default'}")
+    v = verifier.usage
+    print(f"verifier: {v.calls} calls, in={v.input_tokens}, out={v.output_tokens}, model={verifier.model}")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     path = OUT_DIR / f"{time.strftime('%Y%m%d-%H%M%S')}_{args.tag}.json"
     path.write_text(json.dumps({
         "tag": args.tag, "model": llm.model, "thinking": llm.thinking or "default", "runs": runs,
         "usage": {"calls": u.calls, "input_tokens": u.input_tokens, "output_tokens": u.output_tokens},
+        "verifier": {"model": verifier.model, "calls": v.calls, "input_tokens": v.input_tokens,
+                     "output_tokens": v.output_tokens},
     }, ensure_ascii=False, indent=2))
     print(f"saved {path.relative_to(Path(__file__).resolve().parent)}")
 

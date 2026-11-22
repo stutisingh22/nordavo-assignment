@@ -81,3 +81,22 @@ def test_existence_claim_matches_faq_facts_too_so_callers_scope_it():
     # "not supported" is a real FAQ fact for E01 (F12): the agent only applies this check to
     # feature_request replies, so this bug reply is NOT blocked there.
     assert g.existence_claim("Unfortunately iOS 15 is not supported; the app needs iOS 16 or later.")
+
+
+def test_extra_phrasings_fire():
+    cases = {
+        "Wij gaan de incasso storneren.": "refund_or_disputed_charge",
+        "We hebben deze maand te veel betaald.": "refund_or_disputed_charge",
+        "Ik wil downgraden naar Basis.": "cancellation_or_contract_change",
+        "Ons account is overgenomen door iemand.": "security_incident",
+        "Wij stappen naar de rechter.": "legal_threat",
+        "We overwegen om te stoppen met Roosterly.": "threat_to_leave",
+    }
+    for text, rule in cases.items():
+        assert rule in g.always_human_hits(text), text
+
+
+def test_extra_phrasings_do_not_misfire():
+    for text in ["De rechter knop doet niks.", "Waar vind ik Instellingen → Juridisch?",
+                 "Hoe upgrade ik naar Plus?", "Kan ik de app op mijn telefoon gebruiken?"]:
+        assert g.always_human_hits(text) == [], text

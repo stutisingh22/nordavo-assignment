@@ -53,7 +53,8 @@ def _retry_delay_s(resp: httpx.Response) -> float | None:
 
 
 class Gemini:
-    def __init__(self, model: str | None = None, api_key: str | None = None, timeout_s: float = 90):
+    def __init__(self, model: str | None = None, api_key: str | None = None, timeout_s: float = 90,
+                 thinking: str | None = None):
         self.model = model or os.environ.get("LLM_MODEL", "gemini-3.5-flash")
         key = api_key or os.environ.get("GEMINI_API_KEY", "").strip()
         if not key:
@@ -61,7 +62,7 @@ class Gemini:
         self._http = httpx.Client(headers={"x-goog-api-key": key}, timeout=timeout_s)
         self.usage = Usage()
         # Hidden "thinking" tokens are billed as output. "" = model default; else low/medium/high.
-        self.thinking = os.environ.get("LLM_THINKING", "").strip().lower()
+        self.thinking = (thinking if thinking is not None else os.environ.get("LLM_THINKING", "")).strip().lower()
 
     def generate_json(self, system: str, user: str, schema: dict) -> dict:
         body = {

@@ -22,10 +22,16 @@ from helpdesk import HelpdeskClient, HelpdeskError
 from llm import Gemini, LLMError
 from redact import redact_obj
 from state import StateStore, needs_decision, post_once
+from verify import make_verifier
 
 LOG_DIR = Path(__file__).resolve().parent / "logs"
-# Gemini 3.5 Flash list price (USD per 1M tokens), used only for the cost line in the summary.
-PRICE_IN, PRICE_OUT = 1.50, 9.00
+# List prices (USD per 1M tokens: input, output), used only for the cost line in the summary.
+PRICES = {"gemini-3.5-flash": (1.50, 9.00), "gemini-3.5-flash-lite": (0.30, 2.50)}
+
+
+def cost_usd(llm: Gemini) -> float:
+    p_in, p_out = PRICES.get(llm.model, (0.0, 0.0))
+    return llm.usage.input_tokens / 1e6 * p_in + llm.usage.output_tokens / 1e6 * p_out
 
 
 def log_line(fh, record: dict) -> None:
@@ -40,7 +46,7 @@ def main() -> int:
     ap.add_argument("--only", default="", help="comma-separated ticket ids")
     args = ap.parse_args()
 
-    hd, store, llm = HelpdeskClient(), StateStore(), Gemini()
+    hd, store, llm, verifier = HelpdeskClient(), StateStore(), Gemini(), make_verifier()
     store.acquire_lock()
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
     LOG_DIR.mkdir(exist_ok=True)
@@ -77,7 +83,7 @@ def main() -> int:
                             post_once(hd, store, tid, pending["action"], pending["decision"]).status
                     else:
                         calls_before = llm.usage.calls
-                        d = decide(hd.get_ticket(tid), llm)
+                        d = decide(hd.get_ticket(tid), llm, verifier)
                         tokens = llm.usage.by_call[-1] if llm.usage.calls > calls_before else (0, 0)
                         rec.update(
                             action=d.action, model_action=d.model_action, overrides=d.overrides,
@@ -86,7 +92,8 @@ def main() -> int:
                             faq_ids=d.faq_ids, injection_detected=d.injection_detected,
                             payment_details_found=d.payment_details_found,
                             reason=d.payload["reason"], draft_reply=d.payload.get("draft_reply"),
-                            reply_en=d.reply_en or None, handoff_note=d.payload.get("handoff_note"),
+                            reply_en=d.reply_en or None, verified_en=d.verified_en or None,
+                            handoff_note=d.payload.get("handoff_note"),
                             tokens_in=tokens[0], tokens_out=tokens[1],
                         )
                         rec["outcome"] = "dry_run" if args.dry_run else \
@@ -105,10 +112,12 @@ def main() -> int:
         store.release_lock()
         hd.close_client()
 
-    u = llm.usage
-    cost = u.input_tokens / 1e6 * PRICE_IN + u.output_tokens / 1e6 * PRICE_OUT
     print(f"\noutcomes: {counts}")
-    print(f"LLM: {u.calls} calls, {u.input_tokens} in / {u.output_tokens} out tokens, ~${cost:.3f}")
+    for name, m in (("drafter", llm), ("verifier", verifier)):
+        u = m.usage
+        print(f"{name} {m.model}: {u.calls} calls, {u.input_tokens} in / {u.output_tokens} out tokens, "
+              f"~${cost_usd(m):.3f}")
+    print(f"total ~${cost_usd(llm) + cost_usd(verifier):.3f}")
     print(f"log: {log_path.relative_to(Path(__file__).resolve().parent)}")
     failed = sum(v for k, v in counts.items() if "left_open" in k or k == "failed")
     if failed:
